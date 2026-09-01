@@ -527,6 +527,9 @@ const sh = {
   vignette: false,
   vignetteOffset: 1.2,
   vignetteDarkness: 1.2,
+  bitmap: false,
+  bitmapScale: 2,
+  bitmapInvert: false,
 };
 
 // Sinusoidal UV distortion — the frame ripples horizontally over time.
@@ -577,6 +580,43 @@ const PixelateShader = {
     }`,
 };
 
+// 1-bit output: Bayer ordered dithering collapses the frame to pure
+// black-and-white, like classic bitmap displays.
+const BitmapShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    resolution: { value: new THREE.Vector2(1, 1) },
+    scale: { value: 2 },
+    invert: { value: 0 },
+  },
+  vertexShader: WaveShader.vertexShader,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float scale;
+    uniform float invert;
+    varying vec2 vUv;
+    float bayer2(vec2 a) {
+      a = floor(a);
+      return fract(a.x / 2.0 + a.y * a.y * 0.75);
+    }
+    void main() {
+      vec2 cell = vUv * resolution / scale;
+      vec2 uv = (floor(cell) + 0.5) * scale / resolution;
+      vec4 c = texture2D(tDiffuse, uv);
+      float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      // 8x8 Bayer threshold built from nested 2x2s
+      float threshold = bayer2(cell / 4.0) * 0.25 * 0.25
+        + bayer2(cell / 2.0) * 0.25
+        + bayer2(cell);
+      threshold /= 1.3125; // normalize to 0..1
+      // epsilon keeps pure black from tripping the zero-threshold Bayer cell
+      float bit = step(threshold + 1e-4, lum);
+      if (invert > 0.5) bit = 1.0 - bit;
+      gl_FragColor = vec4(vec3(bit), c.a);
+    }`,
+};
+
 const wavePass = new ShaderPass(WaveShader);
 const pixelatePass = new ShaderPass(PixelateShader);
 const halftonePass = new ShaderPass(DotScreenShader);
@@ -584,7 +624,9 @@ const kaleidoPass = new ShaderPass(KaleidoShader);
 const glitchPass = new GlitchPass();
 const filmPass = new ShaderPass(FilmShader);
 const vignettePass = new ShaderPass(VignetteShader);
-for (const pass of [wavePass, pixelatePass, halftonePass, kaleidoPass, glitchPass, filmPass, vignettePass]) {
+// Bitmap goes last so nothing downstream reintroduces grays into its 1-bit output.
+const bitmapPass = new ShaderPass(BitmapShader);
+for (const pass of [wavePass, pixelatePass, halftonePass, kaleidoPass, glitchPass, filmPass, vignettePass, bitmapPass]) {
   composer.addPass(pass);
 }
 
@@ -610,6 +652,10 @@ function applyShaders() {
   vignettePass.enabled = sh.vignette;
   vignettePass.uniforms.offset.value = sh.vignetteOffset;
   vignettePass.uniforms.darkness.value = sh.vignetteDarkness;
+  bitmapPass.enabled = sh.bitmap;
+  bitmapPass.uniforms.scale.value = sh.bitmapScale;
+  bitmapPass.uniforms.invert.value = sh.bitmapInvert ? 1 : 0;
+  bitmapPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
 }
 
 composer.addPass(new OutputPass());
@@ -767,6 +813,9 @@ shFolder.add(sh, 'filmIntensity', 0, 1).name('grain intensity').onChange(applySh
 shFolder.add(sh, 'vignette').onChange(applyShaders);
 shFolder.add(sh, 'vignetteOffset', 0, 2).name('vignette offset').onChange(applyShaders);
 shFolder.add(sh, 'vignetteDarkness', 0, 2).name('vignette darkness').onChange(applyShaders);
+shFolder.add(sh, 'bitmap').onChange(applyShaders);
+shFolder.add(sh, 'bitmapScale', 1, 12, 1).name('bitmap scale').onChange(applyShaders);
+shFolder.add(sh, 'bitmapInvert').name('bitmap invert').onChange(applyShaders);
 shFolder.close();
 
 const dragFolder = gui.addFolder('drag');
