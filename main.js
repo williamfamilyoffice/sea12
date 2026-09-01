@@ -370,13 +370,20 @@ class Globe {
 //   render → trails → bloom → blur → rgb shift → edge detect → output
 // ---------------------------------------------------------------------------
 // Gradient blur: strength ramps across the screen instead of being uniform.
-// A 24-tap spiral disc kernel whose radius scales with the gradient.
+// A 24-tap spiral disc kernel whose radius scales with the gradient. Depth
+// mode reads the scene depth buffer instead, so blur grows with actual 3D
+// distance from the camera (far side of the globe blurred, near side sharp).
 const ProgressiveBlurShader = {
   uniforms: {
     tDiffuse: { value: null },
+    tDepth: { value: null },
     resolution: { value: new THREE.Vector2(1, 1) },
     amount: { value: 6 },
-    mode: { value: 0 }, // 0: bottom, 1: top, 2: edges
+    mode: { value: 0 }, // 0: bottom, 1: top, 2: edges, 3: depth
+    cameraNear: { value: 0.1 },
+    cameraFar: { value: 100 },
+    depthMin: { value: 2 }, // view-space distance where blur starts
+    depthMax: { value: 5 }, // view-space distance of full blur
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -386,16 +393,27 @@ const ProgressiveBlurShader = {
     }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
     uniform vec2 resolution;
     uniform float amount;
     uniform int mode;
+    uniform float cameraNear;
+    uniform float cameraFar;
+    uniform float depthMin;
+    uniform float depthMax;
     varying vec2 vUv;
+    float viewDistance(vec2 uv) {
+      float depth = texture2D(tDepth, uv).x;
+      // perspective depth -> view-space distance
+      float viewZ = (cameraNear * cameraFar) / ((cameraFar - cameraNear) * depth - cameraFar);
+      return -viewZ;
+    }
     void main() {
       float s;
-      if (mode == 0) s = 1.0 - vUv.y;
-      else if (mode == 1) s = vUv.y;
-      else s = distance(vUv, vec2(0.5)) * 1.8;
-      s = smoothstep(0.1, 0.95, s);
+      if (mode == 0) s = smoothstep(0.1, 0.95, 1.0 - vUv.y);
+      else if (mode == 1) s = smoothstep(0.1, 0.95, vUv.y);
+      else if (mode == 2) s = smoothstep(0.1, 0.95, distance(vUv, vec2(0.5)) * 1.8);
+      else s = smoothstep(depthMin, depthMax, viewDistance(vUv));
       float radius = amount * s * 2.0;
       vec4 sum = vec4(0.0);
       for (int i = 0; i < 24; i++) {
@@ -407,6 +425,11 @@ const ProgressiveBlurShader = {
       gl_FragColor = sum / 24.0;
     }`,
 };
+
+// Depth capture for the depth blur mode: the scene is re-rendered into this
+// target each frame (only while the mode is active) to fill its depth texture.
+const depthTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+depthTarget.depthTexture = new THREE.DepthTexture(window.innerWidth, window.innerHeight);
 
 // Luminance threshold: clips everything below `level` to black, so the smooth
 // afterimage falloff becomes a hard-edged, high-contrast trail.
@@ -683,8 +706,11 @@ function applyFx() {
   blurV.uniforms.v.value = fx.blurAmount / window.innerHeight;
   progBlurPass.enabled = fx.blur && fx.blurProgressive;
   progBlurPass.uniforms.amount.value = fx.blurAmount;
-  progBlurPass.uniforms.mode.value = { bottom: 0, top: 1, edges: 2 }[fx.blurGradient];
+  progBlurPass.uniforms.mode.value = { bottom: 0, top: 1, edges: 2, depth: 3 }[fx.blurGradient];
   progBlurPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+  progBlurPass.uniforms.tDepth.value = depthTarget.depthTexture;
+  progBlurPass.uniforms.cameraNear.value = camera.near;
+  progBlurPass.uniforms.cameraFar.value = camera.far;
   rgbShiftPass.enabled = fx.rgbShift;
   rgbShiftPass.uniforms.amount.value = fx.rgbShiftAmount;
   grayPass.enabled = sobelPass.enabled = fx.edges;
@@ -780,7 +806,7 @@ fxFolder.add(fx, 'bloomThreshold', 0, 1).onChange(applyFx);
 fxFolder.add(fx, 'blur').name('gaussian blur').onChange(applyFx);
 fxFolder.add(fx, 'blurAmount', 0, 10).onChange(applyFx);
 fxFolder.add(fx, 'blurProgressive').name('progressive blur').onChange(applyFx);
-fxFolder.add(fx, 'blurGradient', ['bottom', 'top', 'edges']).name('blur gradient').onChange(applyFx);
+fxFolder.add(fx, 'blurGradient', ['bottom', 'top', 'edges', 'depth']).name('blur gradient').onChange(applyFx);
 fxFolder.add(fx, 'edges').name('edge detect').onChange(applyFx);
 fxFolder.add(fx, 'rgbShift').name('rgb shift').onChange(applyFx);
 fxFolder.add(fx, 'rgbShiftAmount', 0, 0.02).onChange(applyFx);
@@ -842,6 +868,26 @@ renderer.setAnimationLoop(() => {
   if (sh.wave) wavePass.uniforms.time.value += dt * sh.waveSpeed;
   if (sh.film && filmPass.uniforms.time) filmPass.uniforms.time.value += dt;
   controls.update();
+  // Depth blur mode: capture the scene's depth and map the blur ramp across
+  // the depth range the globes actually occupy.
+  if (fx.blur && fx.blurProgressive && fx.blurGradient === 'depth') {
+    // Translucent lines skip depth writes in the main render (see
+    // lineMaterial); force them on here or the depth buffer stays empty
+    // and everything reads as "far".
+    for (const g of globes) for (const m of g.lineMaterials) m.depthWrite = true;
+    renderer.setRenderTarget(depthTarget);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    for (const g of globes) for (const m of g.lineMaterials) m.depthWrite = m.opacity >= 1;
+    const camDist = camera.position.distanceTo(controls.target);
+    let span = 1.5;
+    for (const g of globes) {
+      const extent = g.params.radius * Math.max(g.params.scaleH, g.params.scaleV);
+      span = Math.max(span, g.group.position.distanceTo(controls.target) + extent);
+    }
+    progBlurPass.uniforms.depthMin.value = Math.max(camDist - span, camera.near);
+    progBlurPass.uniforms.depthMax.value = camDist + span;
+  }
   composer.render();
 });
 
@@ -850,6 +896,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
+  depthTarget.setSize(window.innerWidth, window.innerHeight);
   applyFx(); // refresh resolution-dependent uniforms
   applyShaders();
   for (const g of globes) {
