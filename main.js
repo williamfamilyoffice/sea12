@@ -6,6 +6,11 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { GlitchPass } from 'three/addons/postprocessing/GlitchPass.js';
+import { DotScreenShader } from 'three/addons/shaders/DotScreenShader.js';
+import { KaleidoShader } from 'three/addons/shaders/KaleidoShader.js';
+import { FilmShader } from 'three/addons/shaders/FilmShader.js';
+import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { SobelOperatorShader } from 'three/addons/shaders/SobelOperatorShader.js';
@@ -498,6 +503,115 @@ const sobelPass = new ShaderPass(SobelOperatorShader);
 composer.addPass(grayPass);
 composer.addPass(sobelPass);
 
+// ---------------------------------------------------------------------------
+// Shader layer: a second stack of stylistic shaders applied after the base
+// effects. wave → pixelate → halftone → kaleidoscope → glitch → film → vignette
+// ---------------------------------------------------------------------------
+const sh = {
+  wave: false,
+  waveAmplitude: 0.02,
+  waveFrequency: 12,
+  waveSpeed: 2,
+  pixelate: false,
+  pixelSize: 8,
+  halftone: false,
+  halftoneScale: 1.5,
+  halftoneAngle: 1.57,
+  kaleido: false,
+  kaleidoSides: 6,
+  kaleidoAngle: 0,
+  glitch: false,
+  glitchWild: false,
+  film: false,
+  filmIntensity: 0.4,
+  vignette: false,
+  vignetteOffset: 1.2,
+  vignetteDarkness: 1.2,
+};
+
+// Sinusoidal UV distortion — the frame ripples horizontally over time.
+const WaveShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    time: { value: 0 },
+    amplitude: { value: 0.02 },
+    frequency: { value: 12 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float time;
+    uniform float amplitude;
+    uniform float frequency;
+    varying vec2 vUv;
+    void main() {
+      vec2 uv = vUv;
+      uv.x += sin(uv.y * frequency + time) * amplitude;
+      uv.y += cos(uv.x * frequency * 0.7 + time * 0.8) * amplitude * 0.5;
+      gl_FragColor = texture2D(tDiffuse, uv);
+    }`,
+};
+
+// Snaps UVs to a coarse grid for a mosaic look.
+const PixelateShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    resolution: { value: new THREE.Vector2(1, 1) },
+    pixelSize: { value: 8 },
+  },
+  vertexShader: WaveShader.vertexShader,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float pixelSize;
+    varying vec2 vUv;
+    void main() {
+      vec2 px = pixelSize / resolution;
+      vec2 uv = px * (floor(vUv / px) + 0.5);
+      gl_FragColor = texture2D(tDiffuse, uv);
+    }`,
+};
+
+const wavePass = new ShaderPass(WaveShader);
+const pixelatePass = new ShaderPass(PixelateShader);
+const halftonePass = new ShaderPass(DotScreenShader);
+const kaleidoPass = new ShaderPass(KaleidoShader);
+const glitchPass = new GlitchPass();
+const filmPass = new ShaderPass(FilmShader);
+const vignettePass = new ShaderPass(VignetteShader);
+for (const pass of [wavePass, pixelatePass, halftonePass, kaleidoPass, glitchPass, filmPass, vignettePass]) {
+  composer.addPass(pass);
+}
+
+function applyShaders() {
+  wavePass.enabled = sh.wave;
+  wavePass.uniforms.amplitude.value = sh.waveAmplitude;
+  wavePass.uniforms.frequency.value = sh.waveFrequency;
+  pixelatePass.enabled = sh.pixelate;
+  pixelatePass.uniforms.pixelSize.value = sh.pixelSize;
+  pixelatePass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+  halftonePass.enabled = sh.halftone;
+  halftonePass.uniforms.scale.value = sh.halftoneScale;
+  halftonePass.uniforms.angle.value = sh.halftoneAngle;
+  kaleidoPass.enabled = sh.kaleido;
+  kaleidoPass.uniforms.sides.value = sh.kaleidoSides;
+  kaleidoPass.uniforms.angle.value = sh.kaleidoAngle;
+  glitchPass.enabled = sh.glitch;
+  glitchPass.goWild = sh.glitchWild;
+  filmPass.enabled = sh.film;
+  // FilmShader uniform names changed across three versions — set what exists.
+  if (filmPass.uniforms.intensity) filmPass.uniforms.intensity.value = sh.filmIntensity;
+  if (filmPass.uniforms.nIntensity) filmPass.uniforms.nIntensity.value = sh.filmIntensity;
+  vignettePass.enabled = sh.vignette;
+  vignettePass.uniforms.offset.value = sh.vignetteOffset;
+  vignettePass.uniforms.darkness.value = sh.vignetteDarkness;
+}
+
 composer.addPass(new OutputPass());
 
 function applyFx() {
@@ -633,6 +747,28 @@ fxFolder.add(fx, 'trailsThresholdLevel', 0, 2).name('threshold level').onChange(
 fxFolder.add(fx, 'trailsThresholdSoftness', -1, 1).name('threshold softness').onChange(applyFx);
 fxFolder.close();
 
+const shFolder = gui.addFolder('shaders');
+shFolder.add(sh, 'wave').name('wave distortion').onChange(applyShaders);
+shFolder.add(sh, 'waveAmplitude', 0, 0.15).name('wave amplitude').onChange(applyShaders);
+shFolder.add(sh, 'waveFrequency', 1, 60).name('wave frequency').onChange(applyShaders);
+shFolder.add(sh, 'waveSpeed', 0, 10).name('wave speed');
+shFolder.add(sh, 'pixelate').onChange(applyShaders);
+shFolder.add(sh, 'pixelSize', 2, 64, 1).name('pixel size').onChange(applyShaders);
+shFolder.add(sh, 'halftone').onChange(applyShaders);
+shFolder.add(sh, 'halftoneScale', 0.2, 5).name('halftone scale').onChange(applyShaders);
+shFolder.add(sh, 'halftoneAngle', 0, Math.PI).name('halftone angle').onChange(applyShaders);
+shFolder.add(sh, 'kaleido').name('kaleidoscope').onChange(applyShaders);
+shFolder.add(sh, 'kaleidoSides', 2, 16, 1).name('kaleido sides').onChange(applyShaders);
+shFolder.add(sh, 'kaleidoAngle', 0, Math.PI * 2).name('kaleido angle').onChange(applyShaders);
+shFolder.add(sh, 'glitch').onChange(applyShaders);
+shFolder.add(sh, 'glitchWild').name('glitch wild').onChange(applyShaders);
+shFolder.add(sh, 'film').name('film grain').onChange(applyShaders);
+shFolder.add(sh, 'filmIntensity', 0, 1).name('grain intensity').onChange(applyShaders);
+shFolder.add(sh, 'vignette').onChange(applyShaders);
+shFolder.add(sh, 'vignetteOffset', 0, 2).name('vignette offset').onChange(applyShaders);
+shFolder.add(sh, 'vignetteDarkness', 0, 2).name('vignette darkness').onChange(applyShaders);
+shFolder.close();
+
 const dragFolder = gui.addFolder('drag');
 dragFolder.add(drag, 'dragSensitivity', 0.1, 3);
 dragFolder.add(drag, 'lockX').name('lock X axis');
@@ -641,6 +777,7 @@ dragFolder.add(drag, 'lockZ').name('lock Z axis');
 dragFolder.close();
 
 applyFx();
+applyShaders();
 new Globe();
 
 // ---------------------------------------------------------------------------
@@ -653,6 +790,8 @@ renderer.setAnimationLoop(() => {
   if (!drag.lockY) {
     for (const g of globes) g.group.rotateOnWorldAxis(Y_AXIS, g.params.spinSpeed * dt);
   }
+  if (sh.wave) wavePass.uniforms.time.value += dt * sh.waveSpeed;
+  if (sh.film && filmPass.uniforms.time) filmPass.uniforms.time.value += dt;
   controls.update();
   composer.render();
 });
@@ -663,6 +802,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
   applyFx(); // refresh resolution-dependent uniforms
+  applyShaders();
   for (const g of globes) {
     for (const m of g.lineMaterials) m.resolution.set(window.innerWidth, window.innerHeight);
   }
