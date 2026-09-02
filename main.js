@@ -67,24 +67,93 @@ function pointAt(latRad, lonRad, radius) {
   );
 }
 
-// Arc of constant latitude, swept across the visible longitude range.
-function latArcPoints(latRad, lonMinRad, lonMaxRad, radius, segments) {
+// ---------------------------------------------------------------------------
+// Shapes: every shape is a mapping from the (lat, lon) parameter grid to a 3D
+// point, so the wireframe, solid surface, dots, and masking work on all of
+// them unchanged. lat ∈ [-90°, 90°], lon ∈ [-180°, 180°].
+// ---------------------------------------------------------------------------
+const SHAPES = {
+  sphere: (lat, lon, p) => pointAt(lat, lon, p.radius),
+  // Spherical direction pushed out to the unit cube / octahedron surface.
+  cube: (lat, lon, p) => {
+    const v = pointAt(lat, lon, 1);
+    const m = Math.max(Math.abs(v.x), Math.abs(v.y), Math.abs(v.z));
+    return v.multiplyScalar(p.radius / m);
+  },
+  octahedron: (lat, lon, p) => {
+    const v = pointAt(lat, lon, 1);
+    const m = Math.abs(v.x) + Math.abs(v.y) + Math.abs(v.z);
+    return v.multiplyScalar(p.radius / m);
+  },
+  // lat sweeps the tube (doubled to cover the full 360°), lon sweeps the ring.
+  torus: (lat, lon, p) => {
+    const R = p.radius * 0.7;
+    const r = p.radius * 0.3;
+    const tube = lat * 2;
+    const ring = R + r * Math.cos(tube);
+    return new THREE.Vector3(
+      Math.cos(lon) * ring,
+      r * Math.sin(tube),
+      Math.sin(lon) * ring
+    );
+  },
+  cylinder: (lat, lon, p) => {
+    const r = p.radius * 0.8;
+    return new THREE.Vector3(
+      Math.cos(lon) * r,
+      (lat / (Math.PI / 2)) * p.radius,
+      Math.sin(lon) * r
+    );
+  },
+  cone: (lat, lon, p) => {
+    const t = (lat + Math.PI / 2) / Math.PI; // 0 at base, 1 at apex
+    const r = p.radius * (1 - t);
+    return new THREE.Vector3(
+      Math.cos(lon) * r,
+      (lat / (Math.PI / 2)) * p.radius,
+      Math.sin(lon) * r
+    );
+  },
+};
+
+// Arc along the parameter grid: interpolates (lat, lon) from `from` to `to`.
+function paramArc(shapeFn, from, to, segments) {
   const pts = [];
   for (let i = 0; i <= segments; i++) {
-    const lon = lonMinRad + (i / segments) * (lonMaxRad - lonMinRad);
-    pts.push(pointAt(latRad, lon, radius));
+    const t = i / segments;
+    pts.push(shapeFn(from[0] + t * (to[0] - from[0]), from[1] + t * (to[1] - from[1])));
   }
   return pts;
 }
 
-// Arc of constant longitude (meridian), swept across the visible latitude range.
-function lonArcPoints(lonRad, latMinRad, latMaxRad, radius, segments) {
-  const pts = [];
-  for (let i = 0; i <= segments; i++) {
-    const lat = latMinRad + (i / segments) * (latMaxRad - latMinRad);
-    pts.push(pointAt(lat, lonRad, radius));
+// Solid surface over the parameter window — a quad grid evaluated through the
+// shape mapping, slightly inset to avoid z-fighting with the wireframe.
+function surfaceGeometry(shapeFn, latMin, latMax, lonMin, lonMax) {
+  const U = 96; // lon segments
+  const V = 48; // lat segments
+  const positions = [];
+  for (let i = 0; i <= V; i++) {
+    const lat = latMin + (i / V) * (latMax - latMin);
+    for (let j = 0; j <= U; j++) {
+      const lon = lonMin + (j / U) * (lonMax - lonMin);
+      const v = shapeFn(lat, lon).multiplyScalar(0.995);
+      positions.push(v.x, v.y, v.z);
+    }
   }
-  return pts;
+  const indices = [];
+  for (let i = 0; i < V; i++) {
+    for (let j = 0; j < U; j++) {
+      const a = i * (U + 1) + j;
+      const b = a + 1;
+      const c = a + U + 1;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  return geometry;
 }
 
 // Shared circular sprite so dots render as circles, not the default squares.
@@ -103,6 +172,7 @@ const DOT_TEXTURE = (() => {
 // Globe instances — each owns its params, scene group, and GUI folder
 // ---------------------------------------------------------------------------
 const GLOBE_DEFAULTS = {
+  shape: 'sphere',
   radius: 1,
   latitudeLines: 12,
   longitudeLines: 24,
@@ -229,15 +299,17 @@ class Globe {
     };
 
     // Fully transparent lines are skipped outright, not drawn invisibly.
+    const shapeFn = (lat, lon) => SHAPES[p.shape](lat, lon, p);
+
     if (p.wireframe) {
       if (latOpacity > 0) {
         for (const lat of lats) {
-          addLine(latArcPoints(lat, lonMin, lonMax, p.radius, p.segments), latMaterial);
+          addLine(paramArc(shapeFn, [lat, lonMin], [lat, lonMax], p.segments), latMaterial);
         }
       }
       if (lonOpacity > 0) {
         for (const lon of lons) {
-          addLine(lonArcPoints(lon, latMin, latMax, p.radius, p.segments), lonMaterial);
+          addLine(paramArc(shapeFn, [latMin, lon], [latMax, lon], p.segments), lonMaterial);
         }
       }
     }
@@ -247,7 +319,7 @@ class Globe {
       const positions = [];
       for (const lat of lats) {
         for (const lon of lons) {
-          const pt = pointAt(lat, lon, p.radius);
+          const pt = shapeFn(lat, lon);
           positions.push(pt.x, pt.y, pt.z);
         }
       }
@@ -270,17 +342,8 @@ class Globe {
     // Built over the same mask window as the wireframe; DoubleSide so the
     // inside face is visible through the masked-away opening.
     if (p.solid) {
-      const geometry = new THREE.SphereGeometry(
-        p.radius * 0.995,
-        64,
-        32,
-        Math.PI - lonMax, // SphereGeometry azimuth runs opposite to our lon
-        lonMax - lonMin,
-        Math.PI / 2 - latMax,
-        latMax - latMin
-      );
       const surface = new THREE.Mesh(
-        geometry,
+        surfaceGeometry(shapeFn, latMin, latMax, lonMin, lonMax),
         new THREE.MeshBasicMaterial({
           color: p.surfaceColor,
           side: THREE.DoubleSide,
@@ -299,7 +362,7 @@ class Globe {
         const latPole = (sign * Math.PI) / 2;
         if (latPole < latMin || latPole > latMax) continue;
         const cap = new THREE.Mesh(capGeometry, capMaterial);
-        cap.position.y = sign * p.radius;
+        cap.position.copy(shapeFn(latPole, 0));
         this.group.add(cap);
       }
     }
@@ -313,6 +376,7 @@ class Globe {
     folder.add(p, 'name').name('rename').onChange((v) => folder.title(v));
     folder.add({ duplicate: () => new Globe(this) }, 'duplicate');
     folder.add({ remove: () => this.remove() }, 'remove');
+    folder.add(p, 'shape', Object.keys(SHAPES)).onChange(rebuild);
     folder.add(p, 'radius', 0.2, 3).onChange(rebuild);
     folder.add(p, 'scaleH', 0.1, 3).name('↔ scale horizontal').onChange(rebuild);
     folder.add(p, 'scaleV', 0.1, 3).name('↕ scale vertical').onChange(rebuild);
