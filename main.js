@@ -265,13 +265,19 @@ const globes = [];
 let globeCounter = 0;
 
 class Globe {
-  constructor(source) {
-    this.params = { ...(source ? source.params : GLOBE_DEFAULTS) };
+  constructor(source, saved) {
+    if (saved) {
+      // Restoring a saved preset: use its params and orientation verbatim.
+      this.params = { ...GLOBE_DEFAULTS, ...saved.params };
+    } else {
+      this.params = { ...(source ? source.params : GLOBE_DEFAULTS) };
+    }
     this.id = ++globeCounter;
-    this.params.name = source ? `${source.params.name} copy` : `globe ${this.id}`;
+    if (!saved) this.params.name = source ? `${source.params.name} copy` : `globe ${this.id}`;
     this.group = new THREE.Group();
     this.lineMaterials = [];
-    if (source) {
+    if (saved?.quaternion) this.group.quaternion.fromArray(saved.quaternion);
+    if (source && !saved) {
       // Place the copy beside its source and keep its orientation.
       this.params.posX = source.params.posX + source.params.radius * 2.4;
       this.group.quaternion.copy(source.group.quaternion);
@@ -961,6 +967,112 @@ function applyTheme() {
 
 gui.add(ui, 'darkMode').name('dark mode').onChange(applyTheme);
 gui.addColor(world, 'backgroundColor').onChange((v) => scene.background.set(v));
+
+// ---------------------------------------------------------------------------
+// Presets: named snapshots of the entire sandbox state, kept in localStorage.
+// ---------------------------------------------------------------------------
+const PRESET_KEY = 'globe-sandbox-presets';
+
+function loadPresetStore() {
+  try {
+    return JSON.parse(localStorage.getItem(PRESET_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+const presetStore = loadPresetStore();
+const presetState = { name: 'my preset', selected: '' };
+
+function clearGlobes() {
+  while (globes.length) {
+    const g = globes.pop();
+    g.group.traverse((obj) => {
+      if (obj.isLine || obj.isMesh || obj.isPoints) {
+        obj.geometry.dispose();
+        obj.material.dispose();
+      }
+    });
+    scene.remove(g.group);
+    g.folder.destroy();
+  }
+}
+
+function snapshotSettings() {
+  return {
+    world: { ...world },
+    darkMode: ui.darkMode,
+    fx: { ...fx },
+    sh: { ...sh },
+    anim: { ...anim },
+    globes: globes.map((g) => ({
+      params: { ...g.params },
+      quaternion: g.group.quaternion.toArray(),
+    })),
+    camera: { position: camera.position.toArray(), target: controls.target.toArray() },
+  };
+}
+
+function applyPreset(name) {
+  const data = presetStore[name];
+  if (!data) return;
+  Object.assign(fx, data.fx);
+  Object.assign(sh, data.sh);
+  Object.assign(anim, data.anim);
+  world.backgroundColor = data.world.backgroundColor;
+  scene.background.set(world.backgroundColor);
+  ui.darkMode = data.darkMode;
+  document.body.classList.toggle('light', !ui.darkMode);
+  applyFx();
+  applyShaders();
+  clearGlobes();
+  for (const saved of data.globes) new Globe(null, saved);
+  camera.position.fromArray(data.camera.position);
+  controls.target.fromArray(data.camera.target);
+  orbitAngle = 0;
+  lastWobble = 0;
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+
+const presetFolder = gui.addFolder('presets');
+presetFolder.add(presetState, 'name').name('preset name');
+presetFolder.add(
+  {
+    save: () => {
+      const name = presetState.name.trim() || 'untitled';
+      presetStore[name] = snapshotSettings();
+      localStorage.setItem(PRESET_KEY, JSON.stringify(presetStore));
+      presetState.selected = name;
+      refreshPresetList();
+    },
+  },
+  'save'
+).name('save current settings');
+let presetSelect = presetFolder
+  .add(presetState, 'selected', Object.keys(presetStore))
+  .name('load preset')
+  .onChange(applyPreset);
+presetFolder.add(
+  {
+    del: () => {
+      if (!presetStore[presetState.selected]) return;
+      delete presetStore[presetState.selected];
+      localStorage.setItem(PRESET_KEY, JSON.stringify(presetStore));
+      presetState.selected = '';
+      refreshPresetList();
+    },
+  },
+  'del'
+).name('delete selected');
+
+function refreshPresetList() {
+  // options() replaces the controller in place with the new choice list.
+  presetSelect = presetSelect
+    .options(Object.keys(presetStore))
+    .name('load preset')
+    .onChange(applyPreset);
+  presetSelect.updateDisplay();
+}
 
 const fxFolder = gui.addFolder('effects');
 fxFolder.add(fx, 'bloom').name('outer glow').onChange(applyFx);
