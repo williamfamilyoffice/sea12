@@ -865,6 +865,7 @@ const anim = {
   cameraSpin: 0,
   loop: false,
   loopSeconds: 4,
+  loopMode: 'restart',
   dragSensitivity: 1,
   lockX: false,
   lockY: false,
@@ -1197,6 +1198,7 @@ animFolder
     else loopStart = null;
   });
 animFolder.add(anim, 'loopSeconds', 0.25, 30).name('loop length (s)');
+animFolder.add(anim, 'loopMode', ['restart', 'ping-pong']).name('loop mode');
 animFolder.add(anim, 'dragSensitivity', 0.1, 3).name('drag sensitivity');
 animFolder.add(anim, 'lockX').name('lock X axis');
 animFolder.add(anim, 'lockY').name('lock Y axis');
@@ -1225,6 +1227,7 @@ let orbitAngle = 0;
 // Loop: capture the current pose as the cycle's start; every loopSeconds the
 // clock and all motion state snap back to it so the animation repeats exactly.
 let loopTime = 0;
+let loopDir = 1; // ping-pong playback direction
 let loopStart = null;
 
 function captureLoopStart() {
@@ -1233,27 +1236,49 @@ function captureLoopStart() {
     orbitAngle,
   };
   loopTime = 0;
+  loopDir = 1;
   animTime = 0;
   lastWobble = 0;
 }
 
-renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta() * anim.timeScale;
-  animTime += dt;
+function restoreLoopStart() {
+  animTime = 0;
+  lastWobble = 0;
+  orbitAngle = loopStart.orbitAngle;
+  for (const { g, quaternion } of loopStart.poses) {
+    if (globes.includes(g)) g.group.quaternion.copy(quaternion);
+  }
+}
 
-  // Wrap the loop: restore the captured pose and restart the cycle clock.
+renderer.setAnimationLoop(() => {
+  const rawDt = clock.getDelta() * anim.timeScale;
+  let dt = rawDt;
+
+  // Loop wrap. restart: snap back to the captured pose each cycle.
+  // ping-pong: reverse playback at the end so motion retraces to the start,
+  // re-syncing to the captured pose exactly when it gets there.
   if (anim.loop && loopStart) {
-    loopTime += dt;
-    if (loopTime >= anim.loopSeconds) {
-      loopTime = 0;
-      animTime = 0;
-      lastWobble = 0;
-      orbitAngle = loopStart.orbitAngle;
-      for (const { g, quaternion } of loopStart.poses) {
-        if (globes.includes(g)) g.group.quaternion.copy(quaternion);
+    if (anim.loopMode === 'ping-pong') {
+      dt = rawDt * loopDir;
+      loopTime += dt;
+      if (loopDir === 1 && loopTime >= anim.loopSeconds) {
+        loopDir = -1;
+        loopTime = anim.loopSeconds;
+      } else if (loopDir === -1 && loopTime <= 0) {
+        loopDir = 1;
+        loopTime = 0;
+        restoreLoopStart(); // kill reverse-integration drift
+        dt = 0;
+      }
+    } else {
+      loopTime += rawDt;
+      if (loopTime >= anim.loopSeconds) {
+        loopTime = 0;
+        restoreLoopStart();
       }
     }
   }
+  animTime += dt;
 
   // Per-axis spin (gated by the axis locks, like drag input).
   if (!anim.lockX && anim.spinX) rotateGlobes(X_AXIS, anim.spinX * dt, false);
