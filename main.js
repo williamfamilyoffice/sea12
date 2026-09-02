@@ -903,8 +903,13 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   }
 });
 
-renderer.domElement.addEventListener('pointerup', () => (dragging = false));
-renderer.domElement.addEventListener('pointercancel', () => (dragging = false));
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  commitHistory(); // drag rotations are undoable actions too
+}
+renderer.domElement.addEventListener('pointerup', endDrag);
+renderer.domElement.addEventListener('pointercancel', endDrag);
 
 // ---------------------------------------------------------------------------
 // GUI — global controls first, then one folder per globe
@@ -934,6 +939,7 @@ function resetAll() {
 }
 
 gui.add({ 'reset all': resetAll }, 'reset all');
+gui.add({ 'undo (⌘Z)': () => undoLastAction() }, 'undo (⌘Z)');
 
 // Theme: dark by default. Switching flips the panel skin and the page/scene
 // background, and swaps globe line/dot colors that still sit on the previous
@@ -1013,9 +1019,7 @@ function snapshotSettings() {
   };
 }
 
-function applyPreset(name) {
-  const data = presetStore[name];
-  if (!data) return;
+function restoreSnapshot(data) {
   Object.assign(fx, data.fx);
   Object.assign(sh, data.sh);
   Object.assign(anim, data.anim);
@@ -1033,6 +1037,44 @@ function applyPreset(name) {
   lastWobble = 0;
   gui.controllersRecursive().forEach((c) => c.updateDisplay());
 }
+
+function applyPreset(name) {
+  const data = presetStore[name];
+  if (data) restoreSnapshot(data);
+}
+
+// ---------------------------------------------------------------------------
+// Undo: every completed action (GUI change, button, drag) commits the prior
+// state to a history stack; undo walks back through it.
+// ---------------------------------------------------------------------------
+const undoHistory = [];
+let undoBaseline = null; // snapshot of the state before the in-flight action
+let isRestoring = false;
+
+function commitHistory() {
+  if (isRestoring || !undoBaseline) return;
+  undoHistory.push(undoBaseline);
+  if (undoHistory.length > 50) undoHistory.shift();
+  undoBaseline = snapshotSettings();
+}
+
+function undoLastAction() {
+  if (!undoHistory.length) return;
+  isRestoring = true;
+  const prev = undoHistory.pop();
+  restoreSnapshot(prev);
+  undoBaseline = prev;
+  // Clear after the click's own change event has fired and been ignored.
+  setTimeout(() => (isRestoring = false), 0);
+}
+
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+    if (e.target.tagName === 'INPUT') return; // let text fields native-undo
+    e.preventDefault();
+    undoLastAction();
+  }
+});
 
 const presetFolder = gui.addFolder('presets');
 presetFolder.add(presetState, 'name').name('preset name');
@@ -1153,6 +1195,11 @@ animFolder.add(anim, 'lockZ').name('lock Z axis');
 applyFx();
 applyShaders();
 new Globe();
+
+// Seed the undo baseline once the initial state exists, then commit history
+// after every completed change anywhere in the GUI.
+undoBaseline = snapshotSettings();
+gui.onFinishChange(commitHistory);
 
 // ---------------------------------------------------------------------------
 // Render loop
