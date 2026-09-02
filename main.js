@@ -72,18 +72,54 @@ function pointAt(latRad, lonRad, radius) {
 // point, so the wireframe, solid surface, dots, and masking work on all of
 // them unchanged. lat ∈ [-90°, 90°], lon ∈ [-180°, 180°].
 // ---------------------------------------------------------------------------
+// Point on the unit square perimeter [-1,1]², uniform in perimeter distance —
+// this keeps grid lines straight and evenly spaced on flat faces.
+function squarePerimeter(lon) {
+  let t = (lon + Math.PI) / (2 * Math.PI);
+  t -= Math.floor(t);
+  const s = t * 4;
+  const k = Math.floor(s);
+  const f = s - k;
+  if (k === 0) return { x: 1, z: -1 + 2 * f };
+  if (k === 1) return { x: 1 - 2 * f, z: 1 };
+  if (k === 2) return { x: -1, z: 1 - 2 * f };
+  return { x: -1 + 2 * f, z: -1 };
+}
+
+// Same, rotated 45° into a diamond with vertices on the x/z axes.
+function diamondPerimeter(lon) {
+  const sq = squarePerimeter(lon);
+  return { x: (sq.x - sq.z) / 2, z: (sq.x + sq.z) / 2 };
+}
+
 const SHAPES = {
   sphere: (lat, lon, p) => pointAt(lat, lon, p.radius),
-  // Spherical direction pushed out to the unit cube / octahedron surface.
+  // Native cube grid: lat walks the profile bottom-face-center → bottom rim →
+  // up the side → top rim → top-face-center; lon walks the square perimeter.
+  // Rings are straight squares, meridians run straight down the faces.
   cube: (lat, lon, p) => {
-    const v = pointAt(lat, lon, 1);
-    const m = Math.max(Math.abs(v.x), Math.abs(v.y), Math.abs(v.z));
-    return v.multiplyScalar(p.radius / m);
+    const r = p.radius;
+    const u = (lat + Math.PI / 2) / Math.PI; // 0..1 along the profile
+    const per = squarePerimeter(lon);
+    if (u < 0.25) {
+      const s = u / 0.25; // bottom face: center out to the rim
+      return new THREE.Vector3(per.x * s * r, -r, per.z * s * r);
+    }
+    if (u > 0.75) {
+      const s = (1 - u) / 0.25; // top face: rim in to the center
+      return new THREE.Vector3(per.x * s * r, r, per.z * s * r);
+    }
+    const y = -r + ((u - 0.25) / 0.5) * 2 * r; // side wall
+    return new THREE.Vector3(per.x * r, y, per.z * r);
   },
+  // Native octahedron grid: square cross-sections shrink linearly toward the
+  // apexes; meridians are straight apex-to-apex edges.
   octahedron: (lat, lon, p) => {
-    const v = pointAt(lat, lon, 1);
-    const m = Math.abs(v.x) + Math.abs(v.y) + Math.abs(v.z);
-    return v.multiplyScalar(p.radius / m);
+    const r = p.radius;
+    const y = (lat / (Math.PI / 2)) * r;
+    const s = 1 - Math.abs(lat) / (Math.PI / 2);
+    const d = diamondPerimeter(lon);
+    return new THREE.Vector3(d.x * s * r * 1.4, y, d.z * s * r * 1.4);
   },
   // lat sweeps the tube (doubled to cover the full 360°), lon sweeps the ring.
   torus: (lat, lon, p) => {
