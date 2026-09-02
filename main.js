@@ -150,6 +150,28 @@ const SHAPES = {
       Math.sin(lon) * r
     );
   },
+  // Square base (closed, cube-style) tapering straight to an apex.
+  pyramid: (lat, lon, p) => {
+    const r = p.radius;
+    const u = (lat + Math.PI / 2) / Math.PI;
+    const per = squarePerimeter(lon);
+    if (u < 0.25) {
+      const s = u / 0.25; // base face: center out to the rim
+      return new THREE.Vector3(per.x * s * r, -r, per.z * s * r);
+    }
+    const t = (u - 0.25) / 0.75; // 0 at base rim, 1 at apex
+    const s = 1 - t;
+    return new THREE.Vector3(per.x * s * r, -r + t * 2 * r, per.z * s * r);
+  },
+  // Flat square grid facing the camera: lon → x, lat → y.
+  plane: (lat, lon, p) =>
+    new THREE.Vector3((lon / Math.PI) * p.radius, (lat / (Math.PI / 2)) * p.radius, 0),
+  // Flat disc facing the camera: lat → radius, lon → angle. The lat rings
+  // become concentric circles; stretch with the scale sliders for ellipses.
+  ellipse: (lat, lon, p) => {
+    const rad = ((lat + Math.PI / 2) / Math.PI) * p.radius;
+    return new THREE.Vector3(Math.cos(lon) * rad, Math.sin(lon) * rad, 0);
+  },
 };
 
 // Arc along the parameter grid: interpolates (lat, lon) from `from` to `to`.
@@ -213,9 +235,9 @@ const GLOBE_DEFAULTS = {
   latitudeLines: 12,
   longitudeLines: 24,
   segments: 128,
-  latColor: '#4cc9f0',
+  latColor: '#ffffff',
   latOpacity: 0.85,
-  lonColor: '#4cc9f0',
+  lonColor: '#ffffff',
   lonOpacity: 0.85,
   strokeWidth: 1,
   spinSpeed: 0.15,
