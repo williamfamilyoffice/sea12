@@ -863,6 +863,8 @@ const anim = {
   bounceSpeed: 2,
   orbitSpeed: 0,
   cameraSpin: 0,
+  loop: false,
+  loopSeconds: 4,
   dragSensitivity: 1,
   lockX: false,
   lockY: false,
@@ -1187,6 +1189,14 @@ animFolder.add(anim, 'bounceAmp', 0, 2).name('bounce height');
 animFolder.add(anim, 'bounceSpeed', 0.1, 10).name('bounce speed');
 animFolder.add(anim, 'orbitSpeed', -2, 2).name('formation orbit');
 animFolder.add(anim, 'cameraSpin', -10, 10).name('camera spin');
+animFolder
+  .add(anim, 'loop')
+  .name('loop animation')
+  .onChange((on) => {
+    if (on) captureLoopStart();
+    else loopStart = null;
+  });
+animFolder.add(anim, 'loopSeconds', 0.25, 30).name('loop length (s)');
 animFolder.add(anim, 'dragSensitivity', 0.1, 3).name('drag sensitivity');
 animFolder.add(anim, 'lockX').name('lock X axis');
 animFolder.add(anim, 'lockY').name('lock Y axis');
@@ -1201,6 +1211,9 @@ new Globe();
 undoBaseline = snapshotSettings();
 gui.onFinishChange(commitHistory);
 
+// Console access for experimentation: sandbox.globes[0].params, sandbox.anim...
+window.sandbox = { globes, anim, fx, sh, world, scene, camera };
+
 // ---------------------------------------------------------------------------
 // Render loop
 // ---------------------------------------------------------------------------
@@ -1209,9 +1222,38 @@ let animTime = 0;
 let lastWobble = 0;
 let orbitAngle = 0;
 
+// Loop: capture the current pose as the cycle's start; every loopSeconds the
+// clock and all motion state snap back to it so the animation repeats exactly.
+let loopTime = 0;
+let loopStart = null;
+
+function captureLoopStart() {
+  loopStart = {
+    poses: globes.map((g) => ({ g, quaternion: g.group.quaternion.clone() })),
+    orbitAngle,
+  };
+  loopTime = 0;
+  animTime = 0;
+  lastWobble = 0;
+}
+
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta() * anim.timeScale;
   animTime += dt;
+
+  // Wrap the loop: restore the captured pose and restart the cycle clock.
+  if (anim.loop && loopStart) {
+    loopTime += dt;
+    if (loopTime >= anim.loopSeconds) {
+      loopTime = 0;
+      animTime = 0;
+      lastWobble = 0;
+      orbitAngle = loopStart.orbitAngle;
+      for (const { g, quaternion } of loopStart.poses) {
+        if (globes.includes(g)) g.group.quaternion.copy(quaternion);
+      }
+    }
+  }
 
   // Per-axis spin (gated by the axis locks, like drag input).
   if (!anim.lockX && anim.spinX) rotateGlobes(X_AXIS, anim.spinX * dt, false);
