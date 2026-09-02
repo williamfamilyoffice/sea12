@@ -113,6 +113,42 @@
     .lil-gui button:active {
       filter: brightness(0.85);
     }
+
+    /* light mode */
+    body.light {
+      background: #ffffff;
+    }
+    body.light #info {
+      color: #8e8e93;
+    }
+    body.light .lil-gui {
+      --background-color: rgba(249, 249, 251, 0.78);
+      --title-background-color: rgba(255, 255, 255, 0.6);
+      --title-text-color: #000000;
+      --text-color: rgba(0, 0, 0, 0.85);
+      --widget-color: rgba(120, 120, 128, 0.16);
+      --hover-color: rgba(120, 120, 128, 0.24);
+      --focus-color: rgba(120, 120, 128, 0.3);
+      --number-color: #007aff;
+      --string-color: #007aff;
+    }
+    body.light .lil-gui.root {
+      border: 0.5px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+    }
+    body.light .lil-gui input[type='checkbox'] {
+      background: rgba(120, 120, 128, 0.32);
+    }
+    body.light .lil-gui input[type='checkbox']:checked {
+      background: #34c759;
+    }
+    body.light .lil-gui .slider .fill,
+    body.light .lil-gui button {
+      background: #007aff;
+    }
+    body.light .lil-gui button:hover {
+      background: #007aff;
+    }
   </style>
   <script type="importmap">
     {

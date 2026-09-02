@@ -928,6 +928,38 @@ function resetAll() {
 }
 
 gui.add({ 'reset all': resetAll }, 'reset all');
+
+// Theme: dark by default. Switching flips the panel skin and the page/scene
+// background, and swaps globe line/dot colors that still sit on the previous
+// theme's default — custom colors are left alone.
+const ui = { darkMode: true };
+const THEME = {
+  dark: { bg: '#000000', line: '#ffffff' },
+  light: { bg: '#ffffff', line: '#000000' },
+};
+
+function applyTheme() {
+  const from = THEME[ui.darkMode ? 'light' : 'dark'];
+  const to = THEME[ui.darkMode ? 'dark' : 'light'];
+  document.body.classList.toggle('light', !ui.darkMode);
+  if (world.backgroundColor.toLowerCase() === from.bg) {
+    world.backgroundColor = to.bg;
+    scene.background.set(to.bg);
+  }
+  for (const g of globes) {
+    let changed = false;
+    for (const key of ['latColor', 'lonColor', 'dotColor']) {
+      if (g.params[key].toLowerCase() === from.line) {
+        g.params[key] = to.line;
+        changed = true;
+      }
+    }
+    if (changed) g.build();
+  }
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+
+gui.add(ui, 'darkMode').name('dark mode').onChange(applyTheme);
 gui.addColor(world, 'backgroundColor').onChange((v) => scene.background.set(v));
 
 const fxFolder = gui.addFolder('effects');
