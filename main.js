@@ -240,7 +240,6 @@ const GLOBE_DEFAULTS = {
   lonColor: '#ffffff',
   lonOpacity: 0.85,
   strokeWidth: 1,
-  spinSpeed: 0.15,
   showPoles: true,
   wireframe: true,
   solid: false,
@@ -446,7 +445,6 @@ class Globe {
     folder.addColor(p, 'lonColor').name('↔ lon line color').onChange(rebuild);
     folder.add(p, 'lonOpacity', 0, 1).name('↔ lon opacity').onChange(rebuild);
     folder.add(p, 'strokeWidth', 0.5, 12, 0.5).name('stroke width (px)').onChange(rebuild);
-    folder.add(p, 'spinSpeed', -5, 5);
     folder.add(p, 'showPoles').onChange(rebuild);
     folder.add(p, 'wireframe').onChange(rebuild);
     folder.add(p, 'solid').onChange(rebuild);
@@ -841,12 +839,24 @@ function applyFx() {
 }
 
 // ---------------------------------------------------------------------------
-// Drag to rotate every globe about its own center (world axes, respecting
-// per-axis locks)
+// Animation: global motion controls (spin, pulse, wobble, bounce, orbit,
+// camera) plus drag-to-rotate. Axis locks gate both drag input and spin.
 //   left-drag:        horizontal → Y axis, vertical → X axis
 //   shift+left-drag:  horizontal → Z axis (roll)
 // ---------------------------------------------------------------------------
-const drag = {
+const anim = {
+  timeScale: 1,
+  spinX: 0,
+  spinY: 0.15,
+  spinZ: 0,
+  pulseAmp: 0,
+  pulseSpeed: 2,
+  wobbleAmp: 0,
+  wobbleSpeed: 2,
+  bounceAmp: 0,
+  bounceSpeed: 2,
+  orbitSpeed: 0,
+  cameraSpin: 0,
   dragSensitivity: 1,
   lockX: false,
   lockY: false,
@@ -878,12 +888,12 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   const dx = e.clientX - lastPointer.x;
   const dy = e.clientY - lastPointer.y;
   lastPointer = { x: e.clientX, y: e.clientY };
-  const k = DRAG_SPEED * drag.dragSensitivity;
+  const k = DRAG_SPEED * anim.dragSensitivity;
   if (e.shiftKey) {
-    rotateGlobes(Z_AXIS, -dx * k, drag.lockZ);
+    rotateGlobes(Z_AXIS, -dx * k, anim.lockZ);
   } else {
-    rotateGlobes(Y_AXIS, dx * k, drag.lockY);
-    rotateGlobes(X_AXIS, dy * k, drag.lockX);
+    rotateGlobes(Y_AXIS, dx * k, anim.lockY);
+    rotateGlobes(X_AXIS, dy * k, anim.lockX);
   }
 });
 
@@ -966,12 +976,23 @@ shFolder.add(sh, 'bitmapScale', 1, 12, 1).name('bitmap scale').onChange(applySha
 shFolder.add(sh, 'bitmapInvert').name('bitmap invert').onChange(applyShaders);
 shFolder.close();
 
-const dragFolder = gui.addFolder('drag');
-dragFolder.add(drag, 'dragSensitivity', 0.1, 3);
-dragFolder.add(drag, 'lockX').name('lock X axis');
-dragFolder.add(drag, 'lockY').name('lock Y axis');
-dragFolder.add(drag, 'lockZ').name('lock Z axis');
-dragFolder.close();
+const animFolder = gui.addFolder('animation');
+animFolder.add(anim, 'timeScale', 0, 4).name('time scale');
+animFolder.add(anim, 'spinX', -5, 5).name('spin X');
+animFolder.add(anim, 'spinY', -5, 5).name('spin Y');
+animFolder.add(anim, 'spinZ', -5, 5).name('spin Z');
+animFolder.add(anim, 'pulseAmp', 0, 0.5).name('pulse amount');
+animFolder.add(anim, 'pulseSpeed', 0.1, 10).name('pulse speed');
+animFolder.add(anim, 'wobbleAmp', 0, 1).name('wobble amount');
+animFolder.add(anim, 'wobbleSpeed', 0.1, 10).name('wobble speed');
+animFolder.add(anim, 'bounceAmp', 0, 2).name('bounce height');
+animFolder.add(anim, 'bounceSpeed', 0.1, 10).name('bounce speed');
+animFolder.add(anim, 'orbitSpeed', -2, 2).name('formation orbit');
+animFolder.add(anim, 'cameraSpin', -10, 10).name('camera spin');
+animFolder.add(anim, 'dragSensitivity', 0.1, 3).name('drag sensitivity');
+animFolder.add(anim, 'lockX').name('lock X axis');
+animFolder.add(anim, 'lockY').name('lock Y axis');
+animFolder.add(anim, 'lockZ').name('lock Z axis');
 
 applyFx();
 applyShaders();
@@ -981,12 +1002,44 @@ new Globe();
 // Render loop
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
+let animTime = 0;
+let lastWobble = 0;
+let orbitAngle = 0;
 
 renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta();
-  if (!drag.lockY) {
-    for (const g of globes) g.group.rotateOnWorldAxis(Y_AXIS, g.params.spinSpeed * dt);
+  const dt = clock.getDelta() * anim.timeScale;
+  animTime += dt;
+
+  // Per-axis spin (gated by the axis locks, like drag input).
+  if (!anim.lockX && anim.spinX) rotateGlobes(X_AXIS, anim.spinX * dt, false);
+  if (!anim.lockY && anim.spinY) rotateGlobes(Y_AXIS, anim.spinY * dt, false);
+  if (!anim.lockZ && anim.spinZ) rotateGlobes(Z_AXIS, anim.spinZ * dt, false);
+
+  // Wobble: oscillating roll, applied as a delta so drag rotation composes.
+  const wobble = anim.wobbleAmp * Math.sin(animTime * anim.wobbleSpeed);
+  if (wobble !== lastWobble) rotateGlobes(Z_AXIS, wobble - lastWobble, anim.lockZ);
+  lastWobble = wobble;
+
+  // Orbit swings globe positions around the scene center; pulse breathes the
+  // scale; bounce lifts everything on a rectified sine.
+  orbitAngle += anim.orbitSpeed * dt;
+  const pulse = 1 + anim.pulseAmp * Math.sin(animTime * anim.pulseSpeed);
+  const bounce = anim.bounceAmp * Math.abs(Math.sin(animTime * anim.bounceSpeed));
+  const cosO = Math.cos(orbitAngle);
+  const sinO = Math.sin(orbitAngle);
+  for (const g of globes) {
+    const p = g.params;
+    g.group.position.set(
+      cosO * p.posX - sinO * p.posZ,
+      p.posY + bounce,
+      sinO * p.posX + cosO * p.posZ
+    );
+    g.group.scale.set(p.scaleH * pulse, p.scaleV * pulse, p.scaleH * pulse);
   }
+
+  controls.autoRotate = anim.cameraSpin !== 0;
+  controls.autoRotateSpeed = anim.cameraSpin;
+
   if (sh.wave) wavePass.uniforms.time.value += dt * sh.waveSpeed;
   if (sh.film && filmPass.uniforms.time) filmPass.uniforms.time.value += dt;
   controls.update();
