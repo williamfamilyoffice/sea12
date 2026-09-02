@@ -1009,6 +1009,18 @@ shFolder.add(sh, 'bitmapInvert').name('bitmap invert').onChange(applyShaders);
 shFolder.close();
 
 const animFolder = gui.addFolder('animation');
+animFolder.add(
+  {
+    'reset axes': () => {
+      // Snap every globe back to absolute zero orientation and clear the
+      // accumulated wobble/orbit state so positions return home too.
+      for (const g of globes) g.group.quaternion.identity();
+      orbitAngle = 0;
+      lastWobble = 0;
+    },
+  },
+  'reset axes'
+);
 animFolder.add(anim, 'timeScale', 0, 4).name('time scale');
 animFolder.add(anim, 'spinX', -5, 5).name('spin X');
 animFolder.add(anim, 'spinY', -5, 5).name('spin Y');
