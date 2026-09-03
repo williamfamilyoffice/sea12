@@ -673,6 +673,11 @@ const sh = {
   glitchWild: false,
   film: false,
   filmIntensity: 0.4,
+  gradientMap: false,
+  gradientShadows: '#0b0033',
+  gradientMidtones: '#ff2266',
+  gradientHighlights: '#ffeeaa',
+  gradientStrength: 1,
   vignette: false,
   vignetteOffset: 1.2,
   vignetteDarkness: 1.2,
@@ -766,16 +771,45 @@ const BitmapShader = {
     }`,
 };
 
+// Gradient map: remaps luminance onto a three-stop color ramp
+// (shadows → midtones → highlights), blended by strength.
+const GradientMapShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    shadows: { value: new THREE.Color('#0b0033') },
+    midtones: { value: new THREE.Color('#ff2266') },
+    highlights: { value: new THREE.Color('#ffeeaa') },
+    strength: { value: 1 },
+  },
+  vertexShader: WaveShader.vertexShader,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform vec3 shadows;
+    uniform vec3 midtones;
+    uniform vec3 highlights;
+    uniform float strength;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      vec3 ramp = lum < 0.5
+        ? mix(shadows, midtones, lum * 2.0)
+        : mix(midtones, highlights, (lum - 0.5) * 2.0);
+      gl_FragColor = vec4(mix(c.rgb, ramp, strength), c.a);
+    }`,
+};
+
 const wavePass = new ShaderPass(WaveShader);
 const pixelatePass = new ShaderPass(PixelateShader);
 const halftonePass = new ShaderPass(DotScreenShader);
 const kaleidoPass = new ShaderPass(KaleidoShader);
 const glitchPass = new GlitchPass();
 const filmPass = new ShaderPass(FilmShader);
+const gradientMapPass = new ShaderPass(GradientMapShader);
 const vignettePass = new ShaderPass(VignetteShader);
 // Bitmap goes last so nothing downstream reintroduces grays into its 1-bit output.
 const bitmapPass = new ShaderPass(BitmapShader);
-for (const pass of [wavePass, pixelatePass, halftonePass, kaleidoPass, glitchPass, filmPass, vignettePass, bitmapPass]) {
+for (const pass of [wavePass, pixelatePass, halftonePass, kaleidoPass, glitchPass, filmPass, gradientMapPass, vignettePass, bitmapPass]) {
   composer.addPass(pass);
 }
 
@@ -798,6 +832,11 @@ function applyShaders() {
   // FilmShader uniform names changed across three versions — set what exists.
   if (filmPass.uniforms.intensity) filmPass.uniforms.intensity.value = sh.filmIntensity;
   if (filmPass.uniforms.nIntensity) filmPass.uniforms.nIntensity.value = sh.filmIntensity;
+  gradientMapPass.enabled = sh.gradientMap;
+  gradientMapPass.uniforms.shadows.value.set(sh.gradientShadows);
+  gradientMapPass.uniforms.midtones.value.set(sh.gradientMidtones);
+  gradientMapPass.uniforms.highlights.value.set(sh.gradientHighlights);
+  gradientMapPass.uniforms.strength.value = sh.gradientStrength;
   vignettePass.enabled = sh.vignette;
   vignettePass.uniforms.offset.value = sh.vignetteOffset;
   vignettePass.uniforms.darkness.value = sh.vignetteDarkness;
@@ -1157,6 +1196,11 @@ shFolder.add(sh, 'glitch').onChange(applyShaders);
 shFolder.add(sh, 'glitchWild').name('glitch wild').onChange(applyShaders);
 shFolder.add(sh, 'film').name('film grain').onChange(applyShaders);
 shFolder.add(sh, 'filmIntensity', 0, 1).name('grain intensity').onChange(applyShaders);
+shFolder.add(sh, 'gradientMap').name('gradient map').onChange(applyShaders);
+shFolder.addColor(sh, 'gradientShadows').name('gradient shadows').onChange(applyShaders);
+shFolder.addColor(sh, 'gradientMidtones').name('gradient midtones').onChange(applyShaders);
+shFolder.addColor(sh, 'gradientHighlights').name('gradient highlights').onChange(applyShaders);
+shFolder.add(sh, 'gradientStrength', 0, 1).name('gradient strength').onChange(applyShaders);
 shFolder.add(sh, 'vignette').onChange(applyShaders);
 shFolder.add(sh, 'vignetteOffset', 0, 2).name('vignette offset').onChange(applyShaders);
 shFolder.add(sh, 'vignetteDarkness', 0, 2).name('vignette darkness').onChange(applyShaders);
