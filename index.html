@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Outline Globe Sandbox</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000000;
+    }
+    canvas { display: block; }
+    #info {
+      position: fixed;
+      left: 12px;
+      bottom: 10px;
+      color: #6b7280;
+      font: 12px/1.4 ui-monospace, monospace;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* iOS-style skin for lil-gui                                          */
+    /* ------------------------------------------------------------------ */
+    .lil-gui {
+      --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      --font-size: 13px;
+      --input-font-size: 13px;
+      --background-color: rgba(28, 28, 30, 0.72);
+      --title-background-color: rgba(44, 44, 46, 0.6);
+      --title-text-color: #ffffff;
+      --text-color: rgba(255, 255, 255, 0.92);
+      --widget-color: rgba(118, 118, 128, 0.28);
+      --hover-color: rgba(118, 118, 128, 0.4);
+      --focus-color: rgba(118, 118, 128, 0.5);
+      --number-color: #0a84ff;
+      --string-color: #0a84ff;
+      --widget-height: 26px;
+      --spacing: 6px;
+      --padding: 8px;
+      --widget-border-radius: 8px;
+      --checkbox-size: 20px;
+      --slider-knob-width: 4px;
+    }
+    .lil-gui.root {
+      top: 10px;
+      right: 10px;
+      border-radius: 14px;
+      overflow: hidden;
+      backdrop-filter: blur(24px) saturate(1.6);
+      -webkit-backdrop-filter: blur(24px) saturate(1.6);
+      border: 0.5px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+    .lil-gui .title {
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .lil-gui .slider {
+      border-radius: 999px;
+    }
+    .lil-gui .slider .fill {
+      background: #0a84ff;
+      border-radius: 999px;
+    }
+    /* checkboxes → iOS switches */
+    .lil-gui input[type='checkbox'] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 36px;
+      height: 21px;
+      border-radius: 999px;
+      background: rgba(120, 120, 128, 0.36);
+      position: relative;
+      transition: background 0.2s ease;
+      cursor: pointer;
+    }
+    .lil-gui input[type='checkbox']:checked {
+      background: #30d158;
+    }
+    .lil-gui input[type='checkbox']::before {
+      content: '';
+      position: absolute;
+      top: 1.5px;
+      left: 1.5px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      transition: transform 0.2s ease;
+    }
+    .lil-gui input[type='checkbox']:checked::before {
+      transform: translateX(15px);
+    }
+    /* buttons → iOS pills */
+    .lil-gui button {
+      background: #0a84ff;
+      color: #ffffff;
+      border: none;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      transition: filter 0.15s ease;
+    }
+    .lil-gui button:hover {
+      background: #0a84ff;
+      filter: brightness(1.15);
+    }
+    .lil-gui button:active {
+      filter: brightness(0.85);
+    }
+
+    /* light mode */
+    body.light {
+      background: #ffffff;
+    }
+    body.light #info {
+      color: #8e8e93;
+    }
+    body.light .lil-gui {
+      --background-color: rgba(249, 249, 251, 0.78);
+      --title-background-color: rgba(255, 255, 255, 0.6);
+      --title-text-color: #000000;
+      --text-color: rgba(0, 0, 0, 0.85);
+      --widget-color: rgba(120, 120, 128, 0.16);
+      --hover-color: rgba(120, 120, 128, 0.24);
+      --focus-color: rgba(120, 120, 128, 0.3);
+      --number-color: #007aff;
+      --string-color: #007aff;
+    }
+    body.light .lil-gui.root {
+      border: 0.5px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+    }
+    body.light .lil-gui input[type='checkbox'] {
+      background: rgba(120, 120, 128, 0.32);
+    }
+    body.light .lil-gui input[type='checkbox']:checked {
+      background: #34c759;
+    }
+    body.light .lil-gui .slider .fill,
+    body.light .lil-gui button {
+      background: #007aff;
+    }
+    body.light .lil-gui button:hover {
+      background: #007aff;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/",
+        "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="info">drag: rotate globe · shift-drag: roll (Z) · right-drag: orbit camera · scroll: zoom</div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "outline-globe-sandbox",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "npx -y serve -l ${PORT:-5173} ."
+  }
+}

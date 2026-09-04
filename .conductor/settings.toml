@@ -1,0 +1,15 @@
+#:schema https://conductor.build/schemas/settings.repo.schema.json
+
+[scripts]
+# No dependencies today; --no-package-lock keeps the workspace clean since the
+# repo tracks no lockfile. Stays correct if deps are added later.
+setup = "npm install --no-audit --no-fund --no-package-lock"
+archive = "rm -rf node_modules"
+# Each workspace gets its own port via CONDUCTOR_PORT, so parallel workspaces
+# can run their dev servers side by side.
+run_mode = "concurrent"
+
+[scripts.run.dev]
+command = "PORT=$CONDUCTOR_PORT npm run dev"
+default = true
+icon = "globe"
